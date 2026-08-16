@@ -225,6 +225,14 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Subcommand fast path: `sofit publish-log ...` records a posted clip
+    # (attribution join key for the metrics scraper). Everything else stays
+    # on the flag-based parser below.
+    raw = sys.argv[1:] if argv is None else argv
+    if raw and raw[0] == "publish-log":
+        from . import publog
+        return publog.main(raw[1:])
+
     args = _parser().parse_args(argv)
 
     # One env var is the single override channel: every call_claude_json call
