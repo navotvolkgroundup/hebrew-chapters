@@ -747,9 +747,18 @@ def _overlay_pillow_frames(video_path: Path, output_path: Path, width: int,
     ]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
-    for frame_idx in range(total_frames):
-        proc.stdin.write(make_frame(frame_idx / fps))
-    proc.stdin.close()
+    # `total_frames` comes from the CONTAINER duration, which an audio stream
+    # can extend past the video. ffmpeg then finishes on `-shortest` and closes
+    # the pipe while we are still writing, so a short write here is a normal
+    # finish, not an error. stdin is detached afterwards because communicate()
+    # would otherwise re-flush the closed pipe and mask ffmpeg's own stderr.
+    try:
+        for frame_idx in range(total_frames):
+            proc.stdin.write(make_frame(frame_idx / fps))
+        proc.stdin.close()
+    except (BrokenPipeError, ValueError):
+        pass
+    proc.stdin = None
     _, stderr = proc.communicate(timeout=FFMPEG_TIMEOUT)
     if proc.returncode != 0:
         raise RuntimeError(f"Caption overlay failed: {stderr.decode()[-500:]}")
