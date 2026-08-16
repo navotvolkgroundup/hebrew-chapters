@@ -31,9 +31,13 @@ from pathlib import Path
 
 
 def _clip_and_variant(name: str) -> tuple[str, int]:
-    """`clip-5` -> (clip-5, 0); `clip-5.hook2.mp4` -> (clip-5, 2)."""
+    """`clip-5` -> (clip-5, 0); `clip-5.hook2.mp4` -> (clip-5, 2).
+    Renamed copies keep working: `WS205_clip-5.hook1.mp4` -> (clip-5, 1)."""
     stem = Path(name).name
     stem = re.sub(r"\.mp4$", "", stem)
+    m = re.search(r"(clip-\d+)(?:\.hook(\d+))?$", stem)
+    if m:
+        return m.group(1), int(m.group(2) or 0)
     m = re.match(r"^(.*?)\.hook(\d+)$", stem)
     return (m.group(1), int(m.group(2))) if m else (stem, 0)
 
