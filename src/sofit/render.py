@@ -624,6 +624,14 @@ def _bidi_word_order(words: list[dict]) -> list[dict]:
     they don't come out reversed. Hebrew-only lines are simply reversed, as
     before. Internal glyph shaping of each word is still Pillow/libraqm's job.
     """
+    # Base direction is RTL only when the line actually contains RTL letters.
+    # An all-Latin line can still hold neutral-only tokens ("&", "-", "|"),
+    # which are not _is_ltr_word, so they would form their own run and flip the
+    # line: "Under the Guides & Onboarding" -> "Onboarding & Under the Guides".
+    if not any("\u0590" <= c <= "\u05ff" or "\u0600" <= c <= "\u06ff"
+               for w in words for c in (w.get("text") or "")):
+        return list(words)
+
     runs: list[list] = []  # [is_ltr, [words]]
     for w in words:
         ltr = _is_ltr_word(w)
