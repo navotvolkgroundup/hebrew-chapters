@@ -35,6 +35,7 @@ def _clip_and_variant(name: str) -> tuple[str, int]:
     Renamed copies keep working: `WS205_clip-5.hook1.mp4` -> (clip-5, 1)."""
     stem = Path(name).name
     stem = re.sub(r"\.mp4$", "", stem)
+    stem = re.sub(r"\.pers$", "", stem)  # persistent-card style marker
     m = re.search(r"(clip-\d+)(?:\.hook(\d+))?$", stem)
     if m:
         return m.group(1), int(m.group(2) or 0)
@@ -117,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
         "episode": args.episode, "clip": clip_id, "variant": variant,
         "platform": args.platform, "hook": hook, "post_url": args.url,
     }
+    if ".pers" in Path(args.clip).name:
+        row["hook_style"] = "persistent"
     if clip_path.exists():
         dur = _duration(clip_path)
         if dur:

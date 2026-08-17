@@ -91,6 +91,10 @@ def _parser() -> argparse.ArgumentParser:
                    help="logo corner (default top-left)")
     p.add_argument("--no-hook-card", action="store_true",
                    help="don't burn the clip's hook as an opening title card")
+    p.add_argument("--hook-style", choices=["flash", "persistent"], default="flash",
+                   help="hook card style: flash = big title, first ~1.8s only "
+                   "(default); persistent = smaller boxed quote that stays up "
+                   "the whole clip (for A/B testing retention)")
     p.add_argument("--safe-area", choices=["none", "tiktok", "reels"], default="none",
                    help="keep captions inside a platform's UI safe zone (TikTok's "
                    "right-hand button rail covers ~120px; same 9:16 video either way)")
@@ -146,6 +150,7 @@ def _parse_char_refs(pairs: list[str] | None) -> dict[str, str]:
 def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | None,
                  logo: str | None = None, logo_pos: str = "top-left",
                  hook_card: bool = True, hook_variant: int = 0,
+                 hook_style: str = "flash",
                  safe_area: str = "none", cover: str | None = None,
                  cta: str | None = None, music: str | None = None,
                  storyboard: bool = False, style: str | None = None,
@@ -218,7 +223,8 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
     from . import render
     outs = render.render_clips(video, clips, out, aspect=aspect, logo=logo,
                                logo_pos=logo_pos, hook_card=hook_card,
-                               hook_variant=hook_variant, safe_area=safe_area,
+                               hook_variant=hook_variant, hook_style=hook_style,
+                               safe_area=safe_area,
                                cover=cover, cta=cta, music=music)
     print(f"rendered {len(outs)} clip(s) to {out}", file=sys.stderr)
     return 0
@@ -249,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
                             logo=args.logo, logo_pos=args.logo_pos,
                             hook_card=not args.no_hook_card,
                             hook_variant=args.hook_variant,
+                            hook_style=args.hook_style,
                             safe_area=args.safe_area, cover=args.cover,
                             cta=args.cta, music=args.music,
                             storyboard=args.storyboard, style=args.style,
@@ -409,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
                                                logo_pos=args.logo_pos,
                                                hook_card=not args.no_hook_card,
                                                hook_variant=args.hook_variant,
+                                               hook_style=args.hook_style,
                                                safe_area=args.safe_area,
                                                cover=args.cover,
                                                cta=args.cta, music=args.music)

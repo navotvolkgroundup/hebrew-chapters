@@ -832,7 +832,8 @@ def _fit_hook_card(hook: str, height: int, max_w: int, font: str | None = None):
 def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Path,
                           width: int, height: int, font: str | None = None,
                           speed: float = 1.0, hook: str | None = None,
-                          hook_dur: float = 1.8, safe_area: str = "none",
+                          hook_dur: float = 1.8, hook_style: str = "flash",
+                          safe_area: str = "none",
                           hook_top_min: int = 0,
                           accent: tuple[int, int, int, int] | None = None,
                           cta: str | None = None, clip_dur: float | None = None,
@@ -910,7 +911,54 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
     # The hook card must clear a top-corner logo. Raising the logo out of the
     # iPhone status bar pushed it INTO this band, so the card starts below it.
     top_margin = max(int(height * 0.16), hook_top_min)
-    if hook and hook.strip():
+    persistent_card = None
+    card_pos = (0, 0)
+    if hook and hook.strip() and hook_style == "persistent":
+        # Variant B (A/B vs the flash card): a smaller boxed quote that stays
+        # up the WHOLE clip, so a viewer landing mid-clip still has context.
+        # White rounded card, dark text, parked between the logo band and the
+        # face; pre-rendered ONCE and pasted per frame (cheap).
+        p_size = max(26, int(height / 26))
+        p_font = _load_caption_font(p_size, font)
+        p_space = measure.textlength(" ", font=p_font)
+        p_max = int(width * 0.78)
+        p_lines: list[list[dict]] = []
+        cur: list[dict] = []
+        cur_w = 0.0
+        for tok in [{"text": w} for w in hook.split()]:
+            twd = measure.textlength(tok["text"], font=p_font)
+            add = twd + (p_space if cur else 0)
+            if cur and cur_w + add > p_max:
+                p_lines.append(cur)
+                cur, cur_w = [tok], twd
+            else:
+                cur.append(tok)
+                cur_w += add
+        if cur:
+            p_lines.append(cur)
+        p_line_h = int(p_size * 1.35)
+        pad = int(p_size * 0.75)
+        widths = [sum(measure.textlength(w["text"], font=p_font) for w in ln)
+                  + p_space * (len(ln) - 1) for ln in p_lines]
+        card_w = int(max(widths)) + 2 * pad
+        card_h = len(p_lines) * p_line_h + 2 * pad - (p_line_h - p_size) // 2
+        persistent_card = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
+        pcd = ImageDraw.Draw(persistent_card)
+        pcd.rounded_rectangle([0, 0, card_w - 1, card_h - 1],
+                              radius=int(p_size * 0.55),
+                              fill=(255, 255, 255, 247))
+        py = pad
+        for ln, lw in zip(p_lines, widths):
+            order = _bidi_word_order(ln)
+            px = (card_w - lw) / 2
+            for w in order:
+                pcd.text((px, py), w["text"], font=p_font,
+                         fill=(22, 22, 22, 255))
+                px += measure.textlength(w["text"], font=p_font) + p_space
+            py += p_line_h
+        card_pos = ((width - card_w) // 2,
+                    max(int(height * 0.26), hook_top_min + p_line_h))
+    elif hook and hook.strip():
         hook_font, space_w_hook, hook_lines, hook_size = _fit_hook_card(
             hook, height, max_w, font)
         hook_outline = max(3, hook_size // 7)
@@ -964,9 +1012,15 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
         img = None
         d = None
 
-        if hook_lines and t < hook_dur:
+        if persistent_card is not None:
             img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
             d = ImageDraw.Draw(img)
+            img.paste(persistent_card, card_pos, persistent_card)
+
+        if hook_lines and t < hook_dur:
+            if img is None:
+                img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                d = ImageDraw.Draw(img)
             y = top_margin
             for line in hook_lines:
                 order = _bidi_word_order(line)  # visual left-to-right (base RTL)
@@ -1471,6 +1525,7 @@ def extract_clip(
     logo: str | None = None,
     logo_pos: str = "top-left",
     hook: str | None = None,
+    hook_style: str = "flash",
     safe_area: str = "none",
     audiogram: tuple[str, str | None] | None = None,
     accent: tuple[int, int, int, int] | None = None,
@@ -1630,6 +1685,7 @@ def extract_clip(
         try:
             _burn_captions_pillow(temp_clip, caption_entries or [], output_path, tw, th,
                                   font=font, speed=speed, hook=hook,
+                                  hook_style=hook_style,
                                   safe_area=safe_area, hook_top_min=hook_top_min,
                                   accent=accent, cta=cta, clip_dur=duration)
         finally:
@@ -1715,6 +1771,7 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
                  speed: float = 1.0, font: str | None = None,
                  logo: str | None = None, logo_pos: str = "top-left",
                  hook_card: bool = True, hook_variant: int = 0,
+                 hook_style: str = "flash",
                  safe_area: str = "none", cover: str | None = None,
                  cta: str | None = None, music: str | None = None) -> list[str]:
     """Render each clip to out_dir/<id>.mp4, cropped-to-fill `aspect` with
@@ -1783,6 +1840,10 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
             else:
                 print(f"warning: {clip_id} has no hook variant {hook_variant}; "
                       "using the primary hook", file=sys.stderr)
+        # .pers marks the persistent-card style so A/B renders of the same
+        # clip coexist and publish-log can attribute the style.
+        if hook_style == "persistent" and hook_card:
+            suffix += ".pers"
         output_path = out / f"{clip_id}{suffix}.mp4"
 
         # A narrative edit carries `segments` (kept spans, gaps cut). A plain
@@ -1842,8 +1903,12 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
                 font=font,
                 logo=logo_ready,
                 logo_pos=logo_pos,
-                # The hook card belongs to second zero only — the first span.
-                hook=(hook_text if hook_card and ri == 0 else None),
+                # Flash card belongs to second zero only — the first span.
+                # Persistent style stays up the WHOLE clip, so every span
+                # burns it (spans are separate ffmpeg renders).
+                hook=(hook_text if hook_card and
+                      (ri == 0 or hook_style == "persistent") else None),
+                hook_style=hook_style,
                 safe_area=safe_area,
                 audiogram=audiogram_assets,
                 accent=accent,
