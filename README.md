@@ -106,6 +106,25 @@ horse", "a warehouse of goods") while the audio and captions run uninterrupted
 - combine with `--animate` for moving shots. Cutaways persist in the clip spec
 and cache in `<spec dir>/cutaways/`, so corrected re-renders keep them.
 
+### Close the loop: log every post (`sofit publish-log`)
+
+The clip selector can learn from real performance, but only if posts are
+attributed. Record each post the moment you publish it:
+
+```bash
+sofit publish-log clips/clip-5.mp4 --episode WS205 --platform tiktok \
+    --url https://www.tiktok.com/@show/video/123
+```
+
+The hook variant is inferred from the rendered filename (`clip-5.hook1.mp4` =
+variant 1), the hook text is auto-discovered from the newest `*.clips*.json`
+spec near the file, duration comes from ffprobe, and a duplicate-URL guard
+keeps the log clean. Rows land in `~/Documents/sofit-performance.jsonl`
+(override with `SOFIT_PERF_LOG`) with metrics left empty for your
+analytics-scraper of choice to fill; once 8+ rows carry views/retention,
+pool generation starts weighting the hooks that actually held viewers over
+its own priors.
+
 ## How it works
 
 ```
