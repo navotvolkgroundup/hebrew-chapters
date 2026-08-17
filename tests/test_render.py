@@ -635,3 +635,17 @@ def test_overlay_pillow_frames_survives_early_pipe_close(monkeypatch):
     out = Path("out.mp4")
     assert render._overlay_pillow_frames(
         Path("in.mp4"), out, 16, 16, lambda t: b"\x00" * (16 * 16 * 4)) == out
+
+def test_bidi_leaves_ltr_only_lines_untouched():
+    """A line with no RTL letters is not a base-RTL line and must not be
+    reordered. Neutral-only tokens ("&", "-", "|") are not _is_ltr_word, so
+    before this they formed their own run and flipped the whole line."""
+    def order(line):
+        return [w["text"] for w in _bidi_word_order(_t(*line.split()))]
+
+    assert order("Under the Guides & Onboarding") == \
+        ["Under", "the", "Guides", "&", "Onboarding"]
+    assert order("A | B - C") == ["A", "|", "B", "-", "C"]
+    # RTL lines keep their existing visual reordering
+    assert order("שלום עולם") == ["עולם", "שלום"]
+    assert order("שלום OpenAI עולם") == ["עולם", "OpenAI", "שלום"]
