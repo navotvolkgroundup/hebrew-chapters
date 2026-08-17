@@ -696,8 +696,12 @@ def _caption_entries(transcript: dict, start_time: float, end_time: float) -> li
     entries: list[dict] = []
     chunk: list[dict] = []
     punct = (".", "!", "?", ",", ";", ":", "…")
-    max_words = 6      # short chunks read better in short-form
-    max_span = 2.6
+    # Defaults are tuned for speech: short chunks read better in short-form.
+    # A spec written by hand (static labels over non-speech footage) needs a
+    # caption to stay up for its whole span, which these thresholds would
+    # otherwise split into one chunk per word.
+    max_words = int(os.environ.get("SOFIT_MAX_WORDS", "6"))
+    max_span = float(os.environ.get("SOFIT_MAX_SPAN", "2.6"))
 
     def flush() -> None:
         if not chunk:

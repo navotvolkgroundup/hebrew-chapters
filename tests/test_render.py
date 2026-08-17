@@ -649,3 +649,19 @@ def test_bidi_leaves_ltr_only_lines_untouched():
     # RTL lines keep their existing visual reordering
     assert order("שלום עולם") == ["עולם", "שלום"]
     assert order("שלום OpenAI עולם") == ["עולם", "OpenAI", "שלום"]
+
+def test_caption_chunking_thresholds_are_configurable(monkeypatch):
+    """A hand-written spec holds one caption for a whole span; the speech-tuned
+    2.6s cap would split that into one chunk per word."""
+    words = [{"t": 0.0, "d": 12.0, "w": w}
+             for w in "Under the Guides & Onboarding".split()]
+    tr = _clip_transcript({"start": 0.0, "end": 12.0, "words": words})
+
+    assert len(_caption_entries(tr, 0.0, 12.0)) == 5      # default: one per word
+
+    monkeypatch.setenv("SOFIT_MAX_SPAN", "9999")
+    monkeypatch.setenv("SOFIT_MAX_WORDS", "99")
+    entries = _caption_entries(tr, 0.0, 12.0)
+    assert len(entries) == 1
+    assert [w["text"] for w in entries[0]["words"]] == \
+        ["Under", "the", "Guides", "&", "Onboarding"]
