@@ -5,6 +5,7 @@ Covers the two things most likely to break silently:
   * clip-relative word timings convert to correct SRT times
 """
 
+import os
 import pytest
 from pathlib import Path
 
@@ -665,3 +666,20 @@ def test_caption_chunking_thresholds_are_configurable(monkeypatch):
     assert len(entries) == 1
     assert [w["text"] for w in entries[0]["words"]] == \
         ["Under", "the", "Guides", "&", "Onboarding"]
+
+def test_caption_style_env_knobs(monkeypatch):
+    """SOFIT_CAPTION_* tune caption weight; unset means the social defaults."""
+    from sofit.render import _load_caption_font
+
+    # Font weight: the knob reaches the variable-font axis.
+    base = _load_caption_font(48)
+    monkeypatch.setenv("SOFIT_CAPTION_WEIGHT", "Regular")
+    light = _load_caption_font(48)
+    if hasattr(base, "get_variation_names"):        # bundled Rubik present
+        assert base.font.style != light.font.style
+
+    # Size divisor and outline are read at burn time from the environment.
+    monkeypatch.setenv("SOFIT_CAPTION_DIV", "44")
+    assert max(28, 1080 // int(os.environ["SOFIT_CAPTION_DIV"])) == 28
+    monkeypatch.delenv("SOFIT_CAPTION_DIV")
+    assert max(28, 1080 // int(os.environ.get("SOFIT_CAPTION_DIV", "22"))) == 49

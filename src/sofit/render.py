@@ -662,8 +662,9 @@ def _load_caption_font(size: int, font: str | None = None):
             f = ImageFont.truetype(path, size)
         except Exception:
             continue
-        try:  # Rubik is a variable font — go as heavy as possible for social
-            f.set_variation_by_name("Black")
+        try:  # Rubik is a variable font — Black is the default social weight
+            f.set_variation_by_name(
+                os.environ.get("SOFIT_CAPTION_WEIGHT", "Black"))
         except Exception:
             pass
         return f
@@ -865,9 +866,13 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
                 w["start"] /= speed
                 w["end"] /= speed
 
-    font_size = max(28, height // 22)
+    # Caption weight. The defaults are a punchy social look; a calmer deck
+    # (screencast, HOWTO) can dial them down without a code change.
+    size_div = int(os.environ.get("SOFIT_CAPTION_DIV", "22"))
+    outline_px = os.environ.get("SOFIT_CAPTION_OUTLINE")
+    font_size = max(28, height // size_div)
     pil_font = _load_caption_font(font_size, font)
-    outline = max(3, font_size // 8)
+    outline = int(outline_px) if outline_px else max(3, font_size // 8)
     line_h = int(font_size * 1.28)
     w_frac, b_frac, _ = _SAFE_AREAS.get(safe_area, _SAFE_AREAS["none"])
     bottom_margin = int(height * b_frac)  # sit in the lower third, clear of the edge
@@ -947,7 +952,12 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
     def cta_w(txt: str) -> float:
         return measure.textlength(txt, font=cta_font)
 
-    active_color = accent or _ACCENT
+    # Static captions over non-speech footage have no spoken word to track,
+    # so the karaoke highlight is just noise: SOFIT_CAPTION_ACCENT=none drops it.
+    if os.environ.get("SOFIT_CAPTION_ACCENT", "").lower() == "none":
+        active_color = _WHITE
+    else:
+        active_color = accent or _ACCENT
     empty = Image.new("RGBA", (width, height), (0, 0, 0, 0)).tobytes("raw", "RGBA")
 
     def make_frame(t: float) -> bytes:
