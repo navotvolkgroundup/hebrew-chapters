@@ -602,3 +602,36 @@ def test_audiogram_cmd_music_bed():
         music="/nonexistent/theme.mp3")
     fc = cmd[cmd.index("-filter_complex") + 1]
     assert "sidechaincompress" not in fc         # missing file: no bed
+
+
+# --- overlay pipe: ffmpeg finishing early must not raise -----------------
+
+def test_overlay_pillow_frames_survives_early_pipe_close(monkeypatch):
+    """`total_frames` is derived from the CONTAINER duration, which a longer
+    audio stream can push past the video. ffmpeg then exits on `-shortest` and
+    closes stdin mid-write; that is a normal finish, not a failure."""
+    from sofit import render
+
+    class _ClosedStdin:
+        def write(self, _b):
+            raise ValueError("flush of closed file")
+
+        def close(self):
+            raise ValueError("flush of closed file")
+
+    class _Proc:
+        returncode = 0
+
+        def __init__(self):
+            self.stdin = _ClosedStdin()
+
+        def communicate(self, timeout=None):
+            assert self.stdin is None, "stdin must be detached before communicate()"
+            return b"", b""
+
+    monkeypatch.setattr(render, "_probe_fps_frames", lambda p: (30.0, 300))
+    monkeypatch.setattr(render.subprocess, "Popen", lambda *a, **k: _Proc())
+
+    out = Path("out.mp4")
+    assert render._overlay_pillow_frames(
+        Path("in.mp4"), out, 16, 16, lambda t: b"\x00" * (16 * 16 * 4)) == out
