@@ -205,8 +205,30 @@ chapters and Hebrew show notes for it."*
   or a direct audio URL — all cached after first fetch.
 - `--model` (default: ivrit-ai turbo), `--lang` (default `he`), `--max-chapters`,
   `--format {md,txt,youtube,spotify,podcast}`, `--embed-into AUDIO`,
-  `--titler {api,claude-cli}`, `--shownotes`, `--quotes`, `--clips-json PATH`,
-  `--render-clips DIR`, `--render-from PATH`, `--only ID`, `--aspect`, `--out`, `--no-cache`.
+  `--titler {api,claude-cli}`, `--titler-model MODEL`, `--shownotes`, `--quotes`,
+  `--clips-json PATH`, `--render-clips DIR`, `--render-from PATH`, `--only ID`,
+  `--aspect`, `--out`, `--no-cache`.
+
+### Caption tuning (env vars)
+
+The defaults are tuned for social clips from speech (heavy font, karaoke
+highlight, short chunks). For other content — screencasts, static labels,
+calmer decks — dial them without code changes (all defaults unchanged;
+thanks @zohar for these):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SOFIT_MAX_WORDS` | `6` | max words per caption chunk |
+| `SOFIT_MAX_SPAN` | `2.6` | max seconds per chunk — raise it so a hand-written static label stays up for its whole span |
+| `SOFIT_CAPTION_DIV` | `22` | `font_size = height // DIV`; higher = smaller text |
+| `SOFIT_CAPTION_WEIGHT` | `Black` | variable-font weight name (`Bold`, `Medium`, ...) |
+| `SOFIT_CAPTION_OUTLINE` | `font_size // 8` | outline thickness in px |
+| `SOFIT_CAPTION_ACCENT` | karaoke yellow | `none` disables the active-word highlight |
+
+Other env vars: `SOFIT_LOGO`, `SOFIT_CTA`, `SOFIT_MUSIC`, `SOFIT_COVER` (branding),
+`SOFIT_STYLE` / `SOFIT_IMAGE_MODEL` / `SOFIT_VIDEO_MODEL` + `GEMINI_API_KEY` /
+`FAL_KEY` (AI visuals), `SOFIT_TITLER_MODEL` (generation model),
+`SOFIT_PERF_LOG` (performance log path), `SOFIT_CLI_TIMEOUT` (claude-cli wall clock).
 
 ### Render social clips directly (no external tool)
 `--render-clips DIR` turns each pull-quote into a vertical (9:16) clip with burned-in
