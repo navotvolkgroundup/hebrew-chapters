@@ -73,8 +73,11 @@ def _hook_near_file(clip_file: Path, clip_id: str, variant: int) -> str | None:
     for d in (clip_file.parent, clip_file.parent.parent):
         if not d.exists():
             continue
-        # *.clips*.json also catches versioned specs like ep.clips2.json
-        for spec in sorted(d.glob("*.clips*.json")):
+        # *.clips*.json also catches versioned specs like ep.clips2.json.
+        # Newest spec first: the same clip id can exist in an older batch's
+        # spec with a DIFFERENT hook (bit us on WS_13.08 clips 1/5/6).
+        for spec in sorted(d.glob("*.clips*.json"),
+                           key=lambda p: p.stat().st_mtime, reverse=True):
             hook = _hook_from_spec(spec, clip_id, variant)
             if hook:
                 return hook
