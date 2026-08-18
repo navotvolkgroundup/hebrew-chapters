@@ -297,6 +297,22 @@ sofit --render-from clips.json --render-clips out --only clip-3                 
 sofit --render-from clips.json --render-clips out --only clip-3 --hook-variant 1  # -> clip-3.hook1.mp4
 ```
 
+**A/B-testing the hook STYLE.** `--hook-style persistent` swaps the flash card for a
+smaller boxed quote that stays on screen for the whole clip — a viewer landing
+mid-scroll always has context. Writes `<id>.pers.mp4` alongside the flash render, and
+`sofit publish-log` tags the row `hook_style=persistent` so retention can be compared
+per style once the metrics land.
+
+**Speaker name tags.** Add `speaker_tags` to a clip's spec entry to burn a lower-third
+the first time a person appears — a white rounded card on the right with the name bold,
+the title smaller in gray, and an accent bar:
+```json
+"speaker_tags": [{"name": "קארינה רובינשטיין", "title": "שותפה, גראונד-אפ ונצ׳רס",
+                  "at": 2.0, "dur": 3.0, "span": 0}]
+```
+`at` is seconds within its span (`span` defaults to 0, like `cutaways`); `dur` defaults
+to 3.0. Multiple tags per clip are fine — stagger their `at` windows.
+
 **Fixing caption typos.** Transcription isn't perfect — it occasionally mangles a
 word or an English brand name (e.g. `OpenAI` → `אופן-איי-איי`). Correct captions
 *without re-transcribing* and re-render, keeping the karaoke timing aligned:
