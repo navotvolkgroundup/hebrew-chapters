@@ -833,6 +833,7 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
                           width: int, height: int, font: str | None = None,
                           speed: float = 1.0, hook: str | None = None,
                           hook_dur: float = 1.8, hook_style: str = "flash",
+                          speaker_tags: list[dict] | None = None,
                           safe_area: str = "none",
                           hook_top_min: int = 0,
                           accent: tuple[int, int, int, int] | None = None,
@@ -967,6 +968,61 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
     def hook_w(txt: str) -> float:
         return measure.textlength(txt, font=hook_font)
 
+    # Speaker lower-thirds: name + title on a small rounded card, shown for a
+    # few seconds the first time that person appears. Pre-rendered once each.
+    # Card sits on the right (RTL show) at ~58% height: below the hook zone,
+    # above the karaoke band, off the centered face.
+    tag_cards: list[tuple[Image.Image, tuple[int, int], float, float]] = []
+    for tag in (speaker_tags or []):
+        name = (tag.get("name") or "").strip()
+        if not name:
+            continue
+        title_txt = (tag.get("title") or "").strip()
+        n_size = max(28, int(height / 28))
+        t_size = max(22, int(height / 40))
+        n_font = _load_caption_font(n_size, font)
+        t_font = _load_caption_font(t_size, font)
+
+        def _line_w(txt, f):
+            toks = [{"text": w} for w in txt.split()]
+            sp = measure.textlength(" ", font=f)
+            return (toks, sp,
+                    sum(measure.textlength(w["text"], font=f) for w in toks)
+                    + sp * (len(toks) - 1))
+        n_toks, n_sp, n_w = _line_w(name, n_font)
+        t_toks, t_sp, t_w = _line_w(title_txt, t_font) if title_txt else ([], 0.0, 0.0)
+        pad = int(n_size * 0.6)
+        gap = int(n_size * 0.25) if title_txt else 0
+        card_w = int(max(n_w, t_w)) + 2 * pad
+        card_h = int(n_size * 1.2) + (int(t_size * 1.2) + gap if title_txt else 0) + 2 * pad
+        card = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
+        cd = ImageDraw.Draw(card)
+        cd.rounded_rectangle([0, 0, card_w - 1, card_h - 1],
+                             radius=int(n_size * 0.45),
+                             fill=(255, 255, 255, 247))
+        # accent bar on the right edge (RTL reading side)
+        bar = max(6, n_size // 5)
+        cd.rounded_rectangle([card_w - 1 - bar, 0, card_w - 1, card_h - 1],
+                             radius=bar // 2, fill=accent or _ACCENT)
+        yy = pad
+        for toks, sp, lw, f, lh, fill in (
+                (n_toks, n_sp, n_w, n_font, n_size, (22, 22, 22, 255)),
+                (t_toks, t_sp, t_w, t_font, t_size, (95, 95, 95, 255))):
+            if not toks:
+                continue
+            xx = card_w - pad - bar - lw  # right-aligned inside the card
+            for w in _bidi_word_order(toks):
+                cd.text((xx, yy), w["text"], font=f, fill=fill)
+                xx += measure.textlength(w["text"], font=f) + sp
+            yy += int(lh * 1.2) + gap
+        at = float(tag.get("at", 0.0)) / (speed or 1.0)
+        dur = float(tag.get("dur", 3.0)) / (speed or 1.0)
+        # Anchor above the worst-case (3-line) karaoke block so the caption
+        # never runs over the card.
+        card_y = height - bottom_margin - 3 * line_h - card_h - line_h // 2
+        pos = (width - card_w - int(width * 0.045), card_y)
+        tag_cards.append((card, pos, at, at + dur))
+
     # Closing CTA line: small, upper zone (empty once the hook card is gone),
     # shown over the final cta_dur seconds while the audio still plays.
     cta_lines: list[list[dict]] = []
@@ -1016,6 +1072,13 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
             img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
             d = ImageDraw.Draw(img)
             img.paste(persistent_card, card_pos, persistent_card)
+
+        for tc, tc_pos, tc_from, tc_to in tag_cards:
+            if tc_from <= t < tc_to:
+                if img is None:
+                    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                    d = ImageDraw.Draw(img)
+                img.paste(tc, tc_pos, tc)
 
         if hook_lines and t < hook_dur:
             if img is None:
@@ -1532,6 +1595,7 @@ def extract_clip(
     cta: str | None = None,
     music: str | None = None,
     cutaways: list[dict] | None = None,
+    speaker_tags: list[dict] | None = None,
 ) -> Path:
     """Extract a clip, crop-to-fill the target aspect, and burn captions.
 
@@ -1685,7 +1749,7 @@ def extract_clip(
         try:
             _burn_captions_pillow(temp_clip, caption_entries or [], output_path, tw, th,
                                   font=font, speed=speed, hook=hook,
-                                  hook_style=hook_style,
+                                  hook_style=hook_style, speaker_tags=speaker_tags,
                                   safe_area=safe_area, hook_top_min=hook_top_min,
                                   accent=accent, cta=cta, clip_dur=duration)
         finally:
@@ -1919,6 +1983,10 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
                 music=music,
                 cutaways=[c for c in (clip.get("cutaways") or [])
                           if int(c.get("span", 0)) == ri],
+                # Lower-thirds: {"name","title","at","dur","span"} in the clip
+                # spec; "at" is seconds within its span (like cutaways).
+                speaker_tags=[s for s in (clip.get("speaker_tags") or [])
+                              if int(s.get("span", 0)) == ri],
             )
             parts.append(part_path)
 
