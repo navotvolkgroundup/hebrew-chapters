@@ -120,6 +120,8 @@ def performance_hint(path: str | None = None, n: int = 3,
     def fmt(r):
         m = f"{r['retention']}% retention" if r.get("retention") is not None \
             else f"{r['views']} views"
+        if r.get("speaker"):
+            m += f"; opens on {r['speaker']}"
         return f'  - "{r["hook"]}" ({m})'
 
     best = "\n".join(fmt(r) for r in rows[:n])
