@@ -113,14 +113,19 @@ attributed. Record each post the moment you publish it:
 
 ```bash
 sofit publish-log clips/clip-5.mp4 --episode WS205 --platform tiktok \
-    --url https://www.tiktok.com/@show/video/123
+    --url https://www.tiktok.com/@show/video/123 --speaker "Tor"
 ```
 
 The hook variant is inferred from the rendered filename (`clip-5.hook1.mp4` =
 variant 1), the hook text is auto-discovered from the newest `*.clips*.json`
 spec near the file, duration comes from ffprobe, and a duplicate-URL guard
-keeps the log clean. Rows land in `~/Documents/sofit-performance.jsonl`
-(override with `SOFIT_PERF_LOG`) with metrics left empty for your
+keeps the log clean. `--speaker` (optional) records who fronts the clip, so
+"who should open clips" becomes a measurable question — the selector's
+performance hint shows it next to each real hook. Rows land in
+`~/.sofit/performance.jsonl` (legacy `~/Documents/sofit-performance.jsonl`
+still honored if it's the only log; override with `SOFIT_PERF_LOG` — the
+default moved because macOS TCC blocks launchd/cron from Documents) with
+metrics left empty for your
 analytics-scraper of choice to fill; once 8+ rows carry views/retention,
 pool generation starts weighting the hooks that actually held viewers over
 its own priors.
