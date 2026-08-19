@@ -70,8 +70,14 @@ CLIP_FIELDS = (
 
 # Feedback loop: which posted clips actually held viewers.
 # Kept OUTSIDE the repo — these are real business numbers and the repo is public.
+# Default lives under ~/.sofit: macOS TCC blocks launchd/cron jobs from
+# ~/Documents, which silently killed scheduled scrapers. The legacy Documents
+# path is still honored when it's the only log present.
+_LEGACY_PERF_LOG = Path.home() / "Documents" / "sofit-performance.jsonl"
+_DEFAULT_PERF_LOG = Path.home() / ".sofit" / "performance.jsonl"
 PERF_LOG = os.environ.get("SOFIT_PERF_LOG") or str(
-    Path.home() / "Documents" / "sofit-performance.jsonl")
+    _LEGACY_PERF_LOG if _LEGACY_PERF_LOG.exists()
+    and not _DEFAULT_PERF_LOG.exists() else _DEFAULT_PERF_LOG)
 MIN_PERF_ROWS = 8  # below this, "what worked" is noise, not signal
 
 
