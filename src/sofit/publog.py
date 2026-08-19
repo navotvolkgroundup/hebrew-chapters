@@ -96,6 +96,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--url", required=True, help="the live post URL")
     p.add_argument("--spec", help="clips.json spec (default: auto-discover next to the file)")
     p.add_argument("--hook", help="hook text override (else read from the spec)")
+    p.add_argument("--speaker", help="who fronts the clip (first face/voice on "
+                   "screen) - lets the log answer 'who should open clips' with "
+                   "data instead of memory")
     p.add_argument("--log", help="performance log path (default: sofit's PERF_LOG)")
     args = p.parse_args(argv)
 
@@ -120,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     if ".pers" in Path(args.clip).name:
         row["hook_style"] = "persistent"
+    if args.speaker:
+        row["speaker"] = args.speaker
     if clip_path.exists():
         dur = _duration(clip_path)
         if dur:
