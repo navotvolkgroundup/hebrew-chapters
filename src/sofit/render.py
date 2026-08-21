@@ -838,7 +838,8 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
                           hook_top_min: int = 0,
                           accent: tuple[int, int, int, int] | None = None,
                           cta: str | None = None, clip_dur: float | None = None,
-                          cta_dur: float = 2.5) -> Path:
+                          cta_dur: float = 2.5,
+                          face_band: tuple | None = None) -> Path:
     """Burn word-highlighted Hebrew captions: heavy font, raised into the lower
     third, thick outline, the word being spoken popped in an accent colour.
 
@@ -917,32 +918,50 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
     if hook and hook.strip() and hook_style == "persistent":
         # Variant B (A/B vs the flash card): a smaller boxed quote that stays
         # up the WHOLE clip, so a viewer landing mid-clip still has context.
-        # White rounded card, dark text, parked between the logo band and the
-        # face; pre-rendered ONCE and pasted per frame (cheap).
-        p_size = max(26, int(height / 26))
-        p_font = _load_caption_font(p_size, font)
-        p_space = measure.textlength(" ", font=p_font)
-        p_max = int(width * 0.78)
-        p_lines: list[list[dict]] = []
-        cur: list[dict] = []
-        cur_w = 0.0
-        for tok in [{"text": w} for w in hook.split()]:
-            twd = measure.textlength(tok["text"], font=p_font)
-            add = twd + (p_space if cur else 0)
-            if cur and cur_w + add > p_max:
+        # White rounded card, dark text; pre-rendered ONCE and pasted per
+        # frame (cheap). Faces sit at different heights and sizes per crop,
+        # so no fixed position is safe — the card goes into the larger
+        # face-free gap (face_band from the crop's face tracker): between the
+        # chin and the karaoke block, or between the logo band and the
+        # forehead. The font shrinks stepwise if the gap is tight.
+        caption_top = height - bottom_margin - 3 * line_h - line_h // 2
+        if face_band:
+            m = int(height * 0.015)
+            gaps = [(int(face_band[1] * height) + m, caption_top),
+                    (top_margin, int(face_band[0] * height) - m)]
+            gaps = [g for g in gaps if g[1] > g[0]]
+            gap = max(gaps, key=lambda g: g[1] - g[0]) if gaps \
+                else (top_margin, caption_top)
+        else:
+            gap = (top_margin, caption_top)
+
+        for div in (34, 38, 42, 46):
+            p_size = max(20, int(height / div))
+            p_font = _load_caption_font(p_size, font)
+            p_space = measure.textlength(" ", font=p_font)
+            p_max = int(width * 0.84)
+            p_lines: list[list[dict]] = []
+            cur: list[dict] = []
+            cur_w = 0.0
+            for tok in [{"text": w} for w in hook.split()]:
+                twd = measure.textlength(tok["text"], font=p_font)
+                add = twd + (p_space if cur else 0)
+                if cur and cur_w + add > p_max:
+                    p_lines.append(cur)
+                    cur, cur_w = [tok], twd
+                else:
+                    cur.append(tok)
+                    cur_w += add
+            if cur:
                 p_lines.append(cur)
-                cur, cur_w = [tok], twd
-            else:
-                cur.append(tok)
-                cur_w += add
-        if cur:
-            p_lines.append(cur)
-        p_line_h = int(p_size * 1.35)
-        pad = int(p_size * 0.75)
-        widths = [sum(measure.textlength(w["text"], font=p_font) for w in ln)
-                  + p_space * (len(ln) - 1) for ln in p_lines]
-        card_w = int(max(widths)) + 2 * pad
-        card_h = len(p_lines) * p_line_h + 2 * pad - (p_line_h - p_size) // 2
+            p_line_h = int(p_size * 1.35)
+            pad = int(p_size * 0.75)
+            widths = [sum(measure.textlength(w["text"], font=p_font) for w in ln)
+                      + p_space * (len(ln) - 1) for ln in p_lines]
+            card_w = int(max(widths)) + 2 * pad
+            card_h = len(p_lines) * p_line_h + 2 * pad - (p_line_h - p_size) // 2
+            if card_h <= gap[1] - gap[0]:
+                break
         persistent_card = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
         pcd = ImageDraw.Draw(persistent_card)
         pcd.rounded_rectangle([0, 0, card_w - 1, card_h - 1],
@@ -957,8 +976,10 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
                          fill=(22, 22, 22, 255))
                 px += measure.textlength(w["text"], font=p_font) + p_space
             py += p_line_h
-        card_pos = ((width - card_w) // 2,
-                    max(int(height * 0.26), hook_top_min + p_line_h))
+        # Below-face gap: hug the captions (bottom-aligned). Above-face gap:
+        # hug the logo band (top-aligned). Never float mid-gap over the set.
+        card_y = gap[1] - card_h if gap[1] == caption_top else gap[0]
+        card_pos = ((width - card_w) // 2, max(0, card_y))
     elif hook and hook.strip():
         hook_font, space_w_hook, hook_lines, hook_size = _fit_hook_card(
             hook, height, max_w, font)
@@ -1144,10 +1165,15 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
 # ---------------------------------------------------------------------------
 
 def _face_track(video_path: Path, start: float, end: float,
-                step: float = 0.25) -> tuple[list, float]:
+                step: float = 0.25) -> tuple[list, float, tuple | None]:
     """Sample the dominant face x-fraction over the clip. Returns (samples,
-    aspect_hw) where samples is [(t_rel_sec, cx_frac_or_None), ...], or ([], 0)
-    if OpenCV / model / ffmpeg is unavailable or no face is ever found.
+    aspect_hw, face_band) where samples is [(t_rel_sec, cx_frac_or_None), ...],
+    face_band is the (top_frac, bottom_frac) vertical band the face occupies
+    across the clip (10th/90th percentile, so a lone detector glitch doesn't
+    stretch it), or ([], 0, None) if OpenCV / model / ffmpeg is unavailable or
+    no face is ever found. Vertical fractions survive the 9:16 crop unchanged
+    (the crop only trims width), so overlays can use face_band to stay off
+    the face.
 
     Sampled ~4x/sec so a real ~0.6s shot registers as multiple samples (and gets
     followed) while a single-frame detector glitch stays a lone sample (ignored).
@@ -1155,13 +1181,15 @@ def _face_track(video_path: Path, start: float, end: float,
     try:
         import cv2
     except Exception:
-        return [], 0.0
+        return [], 0.0, None
     if not _FACE_MODEL.exists():
-        return [], 0.0
+        return [], 0.0, None
 
     span = max(end - start, 0.001)
     n = max(3, min(int(span / step) + 1, 500))
     samples: list[tuple[float, float | None]] = []
+    tops: list[float] = []
+    bots: list[float] = []
     aspect_hw = 0.0
     with tempfile.TemporaryDirectory(prefix="hc_track_") as tmp:
         pattern = str(Path(tmp) / "f_%04d.png")
@@ -1175,7 +1203,7 @@ def _face_track(video_path: Path, start: float, end: float,
         try:
             subprocess.run(cmd, capture_output=True, timeout=180, check=True)
         except Exception:
-            return [], 0.0
+            return [], 0.0, None
         detector = None
         files = sorted(Path(tmp).glob("f_*.png"))
         for i, fp in enumerate(files):
@@ -1198,10 +1226,14 @@ def _face_track(video_path: Path, start: float, end: float,
             best = max(dets, key=lambda d: float(d[2]) * float(d[3]) * float(d[-1]))
             cx = (float(best[0]) + float(best[2]) / 2) / w
             samples.append((t_rel, cx))
+            tops.append(float(best[1]) / h)
+            bots.append((float(best[1]) + float(best[3])) / h)
 
     if not aspect_hw or all(cx is None for _, cx in samples):
-        return [], 0.0
-    return samples, aspect_hw
+        return [], 0.0, None
+    ts, bs = sorted(tops), sorted(bots)
+    band = (ts[int(len(ts) * 0.1)], bs[min(len(bs) - 1, int(len(bs) * 0.9))])
+    return samples, aspect_hw, band
 
 
 def _dominant_position(values: list, prev: float, tol: float) -> float:
@@ -1596,6 +1628,7 @@ def extract_clip(
     music: str | None = None,
     cutaways: list[dict] | None = None,
     speaker_tags: list[dict] | None = None,
+    face_band: tuple | None = None,
 ) -> Path:
     """Extract a clip, crop-to-fill the target aspect, and burn captions.
 
@@ -1751,7 +1784,8 @@ def extract_clip(
                                   font=font, speed=speed, hook=hook,
                                   hook_style=hook_style, speaker_tags=speaker_tags,
                                   safe_area=safe_area, hook_top_min=hook_top_min,
-                                  accent=accent, cta=cta, clip_dur=duration)
+                                  accent=accent, cta=cta, clip_dur=duration,
+                                  face_band=face_band)
         finally:
             if temp_clip.exists():
                 temp_clip.unlink()
@@ -1937,12 +1971,13 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
             focus = clip.get("focus")
             crop_vf = None
             crop_position = 0.5
+            face_band = None
             if audiogram_assets:
                 pass  # generated canvas: nothing to crop or track
             elif isinstance(focus, (int, float)):
                 crop_position = float(focus)
             elif tw < th:
-                samples, aspect_hw = _face_track(source, start, end)
+                samples, aspect_hw, face_band = _face_track(source, start, end)
                 kf = _pan_keyframes(samples) if samples else []
                 if kf:
                     spread = max(c for _, c in kf) - min(c for _, c in kf)
@@ -1987,6 +2022,7 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
                 # spec; "at" is seconds within its span (like cutaways).
                 speaker_tags=[s for s in (clip.get("speaker_tags") or [])
                               if int(s.get("span", 0)) == ri],
+                face_band=face_band,
             )
             parts.append(part_path)
 
