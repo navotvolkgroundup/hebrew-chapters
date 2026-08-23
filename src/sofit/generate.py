@@ -141,7 +141,9 @@ def performance_hint(path: str | None = None, n: int = 3,
         f"\n\nREAL PERFORMANCE from {len(rows)} posted clips of this show — weight "
         "these over your priors.\nHooks that held viewers:\n" + best +
         "\nHooks that lost them:\n" + worst +
-        "\nFavour what the winners have in common; avoid what the losers share."
+        "\nFavour what the winners have in common; avoid what the losers "
+        "share. When judging what works, do NOT generalize from social-media "
+        "best practices - use ONLY this show's data above."
     )
 
 
