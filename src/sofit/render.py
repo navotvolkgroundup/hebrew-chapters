@@ -652,6 +652,9 @@ def _load_caption_font(size: int, font: str | None = None):
     from PIL import ImageFont
 
     candidates: list[str] = []
+    # SOFIT_FONT: set-once brand font (same pattern as SOFIT_LOGO) - an
+    # explicit `font` argument still wins.
+    font = font or os.environ.get("SOFIT_FONT")
     if font and os.path.exists(font):
         candidates.append(font)
     if _BUNDLED_FONT.exists():
@@ -871,7 +874,8 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
 
     # Caption weight. The defaults are a punchy social look; a calmer deck
     # (screencast, HOWTO) can dial them down without a code change.
-    size_div = int(os.environ.get("SOFIT_CAPTION_DIV", "22"))
+    size_div = int(os.environ.get("SOFIT_CAPTION_DIV")
+                   or _brand_caption_div() or "22")
     outline_px = os.environ.get("SOFIT_CAPTION_OUTLINE")
     font_size = max(28, height // size_div)
     pil_font = _load_caption_font(font_size, font)
@@ -1163,6 +1167,77 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
 # ---------------------------------------------------------------------------
 # Speaker-tracking crop (dynamic pan following the on-screen face)
 # ---------------------------------------------------------------------------
+
+
+# --- Brand kit (machine-local, never committed: fonts are licensed and the
+# repo is public). Assets auto-load from ~/.sofit/assets when present:
+#   font.ttf  -> caption/hook/tag font        (override: SOFIT_FONT)
+#   frame.mov -> alpha frame over every clip  (override: SOFIT_FRAME)
+#   badge.png -> show badge under the karaoke (override: SOFIT_BADGE)
+# ~/.sofit/brand.json {"caption_div": N} sets caption size (H//N px;
+# SOFIT_CAPTION_DIV env still wins).
+_BRAND_DIR = Path.home() / ".sofit" / "assets"
+
+
+def _brand_asset(env: str, name: str) -> str | None:
+    if os.environ.get("SOFIT_BRAND") == "off":
+        return None
+    p = os.environ.get(env)
+    if p and os.path.exists(p):
+        return p
+    q = _BRAND_DIR / name
+    return str(q) if q.exists() else None
+
+
+def _brand_caption_div() -> str | None:
+    if os.environ.get("SOFIT_BRAND") == "off":
+        return None
+    try:
+        cfg = json.loads((Path.home() / ".sofit" / "brand.json").read_text())
+        v = cfg.get("caption_div")
+        return str(int(v)) if v else None
+    except (OSError, ValueError):
+        return None
+
+
+def _apply_brand_overlays(output_path: Path, width: int, height: int) -> None:
+    """Post-pass on a finished clip: show badge under the karaoke block +
+    alpha frame video over everything. No-op when no brand assets exist."""
+    frame = _brand_asset("SOFIT_FRAME", "frame.mov")
+    badge = _brand_asset("SOFIT_BADGE", "badge.png")
+    if not frame and not badge:
+        return
+    inputs = ["-i", str(output_path)]
+    filters = []
+    last = "0:v"
+    idx = 1
+    if badge:
+        inputs += ["-i", badge]
+        bw = int(width * 0.593)          # pill ~= caption-line width
+        by = int(height * 0.797)         # just under the karaoke block
+        filters.append(f"[{idx}:v]scale={bw}:-1[b]")
+        filters.append(f"[{last}][b]overlay=(W-w)/2:{by}[v{idx}]")
+        last = f"v{idx}"
+        idx += 1
+    if frame:
+        inputs += ["-i", frame]
+        filters.append(f"[{idx}:v]scale={width}:{height},format=yuva420p[f]")
+        filters.append(f"[{last}][f]overlay=0:0:eof_action=pass[v{idx}]")
+        last = f"v{idx}"
+    tmp = output_path.with_suffix(".brand.mp4")
+    cmd = ["ffmpeg", "-v", "error", *inputs,
+           "-filter_complex", ";".join(filters),
+           "-map", f"[{last}]", "-map", "0:a?",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium",
+           "-crf", "20", "-c:a", "copy", "-movflags", "+faststart",
+           "-y", str(tmp)]
+    try:
+        _run_ffmpeg(cmd)
+        tmp.replace(output_path)
+    except Exception:  # noqa: BLE001 - a failed brand pass keeps the clean clip
+        tmp.unlink(missing_ok=True)
+        raise
+
 
 def _face_track(video_path: Path, start: float, end: float,
                 step: float = 0.25) -> tuple[list, float, tuple | None]:
@@ -2028,6 +2103,8 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
 
         if len(parts) > 1:
             _concat_parts(parts, output_path)
+        if not audiogram_assets:
+            _apply_brand_overlays(output_path, tw, th)
         outputs.append(str(output_path))
 
     if logo_dir:
