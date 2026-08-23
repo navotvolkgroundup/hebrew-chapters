@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Branded IG carousel quote-cards from episode pull-quotes.
 
+Pipeline: generated automatically by the CLI when quotes are produced
+(--quote-cards DIR); also runnable standalone.
+
 Usage: quotecards.py <episode> <out_dir> <quotes.json>
 quotes.json: {"title": "<episode headline>", "quotes": ["...", ...]}
 
@@ -15,7 +18,7 @@ import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw
-from sofit.render import _load_caption_font, _bidi_word_order
+from .render import _load_caption_font, _bidi_word_order
 
 W, H = 1080, 1350
 DARK = (14, 12, 18)

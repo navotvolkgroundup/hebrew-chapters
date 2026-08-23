@@ -61,6 +61,10 @@ def _parser() -> argparse.ArgumentParser:
                    "on --titler api; Claude Code's configured model on claude-cli)")
     p.add_argument("--shownotes", action="store_true", help="also generate Hebrew show notes")
     p.add_argument("--quotes", action="store_true", help="also extract pull-quotes")
+    p.add_argument("--quote-cards", metavar="DIR",
+                   help="also render the pull-quotes as a branded IG carousel "
+                        "(implies --quotes; slide 0 title from --episode-title)")
+    p.add_argument("--episode-title", help="headline for the carousel title card")
     p.add_argument("--clips-json", metavar="PATH",
                    help="write a clips.json (clip ranges + hooks + per-word timings) for a social-clip renderer")
     p.add_argument("--render-clips", metavar="DIR",
@@ -366,9 +370,20 @@ def main(argv: list[str] | None = None) -> int:
         except generate.GenerationError as e:
             print(f"warning: show notes failed: {e}", file=sys.stderr)
             failed += 1
-    if args.quotes:
+    if args.quotes or args.quote_cards:
         try:
-            _emit("quotes", fmt.render_quotes_md(generate.make_quotes(segments, titler=args.titler)), args.out)
+            _quotes = generate.make_quotes(segments, titler=args.titler)
+            _emit("quotes", fmt.render_quotes_md(_quotes), args.out)
+            if args.quote_cards:
+                from . import quotecards
+                from pathlib import Path as _P
+                episode = os.path.splitext(os.path.basename(media_path))[0]
+                outs = quotecards.make_cards(
+                    episode, _P(args.quote_cards),
+                    args.episode_title or "ציטוטים מהפרק",
+                    [q.text for q in _quotes])
+                print(f"rendered {len(outs)} quote cards to {args.quote_cards}",
+                      file=sys.stderr)
         except generate.GenerationError as e:
             print(f"warning: quotes failed: {e}", file=sys.stderr)
             failed += 1
