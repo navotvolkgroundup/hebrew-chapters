@@ -15,3 +15,10 @@ def test_brand_pop_render_smoke():
     # the render path tolerates a pop whose image is missing (skipped)
     from sofit import render
     assert callable(render._burn_captions_pillow)
+
+
+def test_split_crop_vf_shape():
+    from sofit.render import _split_crop_vf
+    vf = _split_crop_vf("9:16", 0.25, 0.75)
+    assert "vstack=inputs=2" in vf and "split=2" in vf
+    assert "scale=1080:960" in vf

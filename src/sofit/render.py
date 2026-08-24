@@ -1292,15 +1292,19 @@ def _face_track(video_path: Path, start: float, end: float,
     try:
         import cv2
     except Exception:
-        return [], 0.0, None
+        return [], 0.0, None, None
     if not _FACE_MODEL.exists():
-        return [], 0.0, None
+        return [], 0.0, None, None
 
     span = max(end - start, 0.001)
     n = max(3, min(int(span / step) + 1, 500))
     samples: list[tuple[float, float | None]] = []
     tops: list[float] = []
     bots: list[float] = []
+    pair_mids: list[float] = []
+    pair_seps: list[float] = []
+    two_face = 0
+    total_det = 0
     aspect_hw = 0.0
     with tempfile.TemporaryDirectory(prefix="hc_track_") as tmp:
         pattern = str(Path(tmp) / "f_%04d.png")
@@ -1314,7 +1318,7 @@ def _face_track(video_path: Path, start: float, end: float,
         try:
             subprocess.run(cmd, capture_output=True, timeout=180, check=True)
         except Exception:
-            return [], 0.0, None
+            return [], 0.0, None, None
         detector = None
         files = sorted(Path(tmp).glob("f_*.png"))
         for i, fp in enumerate(files):
@@ -1339,12 +1343,47 @@ def _face_track(video_path: Path, start: float, end: float,
             samples.append((t_rel, cx))
             tops.append(float(best[1]) / h)
             bots.append((float(best[1]) + float(best[3])) / h)
+            total_det += 1
+            if len(dets) >= 2:
+                # second-largest face: a real second person, not a glitch,
+                # when it is at least a third of the main face's size.
+                rest = sorted(dets, key=lambda d: float(d[2]) * float(d[3]),
+                              reverse=True)[1]
+                if float(rest[2]) * float(rest[3]) >= \
+                        0.33 * float(best[2]) * float(best[3]):
+                    cx2 = (float(rest[0]) + float(rest[2]) / 2) / w
+                    two_face += 1
+                    pair_mids.append((cx + cx2) / 2)
+                    pair_seps.append(abs(cx - cx2))
 
     if not aspect_hw or all(cx is None for _, cx in samples):
-        return [], 0.0, None
+        return [], 0.0, None, None
     ts, bs = sorted(tops), sorted(bots)
     band = (ts[int(len(ts) * 0.1)], bs[min(len(bs) - 1, int(len(bs) * 0.9))])
-    return samples, aspect_hw, band
+    pair = None
+    if total_det and two_face / total_det >= 0.5:
+        import statistics as _st
+        pair = {"frac": round(two_face / total_det, 2),
+                "mid": _st.median(pair_mids), "sep": _st.median(pair_seps)}
+    return samples, aspect_hw, band, pair
+
+
+
+def _split_crop_vf(aspect_ratio: str, cx_left: float, cx_right: float) -> str:
+    """Two-person stacked split for shots where both faces can't fit one
+    vertical crop: each panel is a full-height crop centered on one face,
+    scaled to W x H/2, stacked leftmost-on-top."""
+    tw, th = _target_resolution(aspect_ratio)
+    panel_ar = tw / (th / 2)                     # e.g. 1080/960 = 9:8
+    parts = []
+    for i, cx in enumerate(sorted((cx_left, cx_right))):
+        parts.append(
+            f"[s{i}]crop='min(iw,ih*{panel_ar:.6f})':ih:"
+            f"'max(0,min(iw-min(iw,ih*{panel_ar:.6f}),"
+            f"iw*{cx:.4f}-min(iw,ih*{panel_ar:.6f})/2))':0,"
+            f"scale={tw}:{th // 2}[p{i}]")
+    return (f"split=2[s0][s1];{parts[0]};{parts[1]};"
+            f"[p0][p1]vstack=inputs=2")
 
 
 def _dominant_position(values: list, prev: float, tol: float) -> float:
@@ -2089,11 +2128,22 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
             elif isinstance(focus, (int, float)):
                 crop_position = float(focus)
             elif tw < th:
-                samples, aspect_hw, face_band = _face_track(source, start, end)
+                samples, aspect_hw, face_band, pair = _face_track(source, start, end)
                 kf = _pan_keyframes(samples) if samples else []
-                if kf:
+                crop_w_frac = (tw / th) * aspect_hw if aspect_hw else 0.0
+                if pair and crop_w_frac:
+                    # Two people persistently in shot. If both fit one crop,
+                    # center on the PAIR MIDPOINT (nobody clipped at the
+                    # edge); if they are too far apart, stacked split-screen.
+                    if pair["sep"] <= crop_w_frac * 0.62:
+                        crop_position = _crop_position_for_face(
+                            pair["mid"], crop_w_frac)
+                    else:
+                        half = pair["sep"] / 2
+                        crop_vf = _split_crop_vf(
+                            aspect, pair["mid"] - half, pair["mid"] + half)
+                elif kf:
                     spread = max(c for _, c in kf) - min(c for _, c in kf)
-                    crop_w_frac = (tw / th) * aspect_hw
                     if spread > 0.08:
                         crop_vf = _dynamic_crop_vf(aspect, kf)        # speaker-tracking pan
                     else:
