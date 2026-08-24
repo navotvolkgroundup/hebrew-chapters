@@ -552,3 +552,80 @@ def make_clips(segments: list[Segment], titler: str = "api") -> list[dict]:
     clip-relative per-word timings. Returns the `clips` array of the clips.json contract."""
     return [clip_spec(q, segments, f"clip-{i}")
             for i, q in enumerate(make_quotes(segments, titler=titler), 1)]
+
+
+# --- Brand pops: entities said aloud -> a 1s logo card at the exact word. ---
+
+BRANDS_DIR = Path.home() / ".sofit" / "assets" / "brands"
+
+
+def _brand_slug(term: str) -> str:
+    return term.strip().replace(" ", "-").replace("\u05f4", "").lower()
+
+
+def find_brand_image(term: str) -> str | None:
+    """Curated machine-local library lookup (~/.sofit/assets/brands/<slug>.png).
+    Logos must be REAL - never generated - so the library grows by hand:
+    detection reports misses and the user drops files in."""
+    if not BRANDS_DIR.exists():
+        return None
+    slug = _brand_slug(term)
+    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+        q = BRANDS_DIR / f"{slug}{ext}"
+        if q.exists():
+            return str(q)
+    # loose match: slug contained in a filename (multi-word Hebrew names)
+    for q in BRANDS_DIR.iterdir():
+        if slug in q.stem.lower():
+            return str(q)
+    return None
+
+
+def detect_brand_mentions(clip: dict, titler: str = "api",
+                          max_pops: int = 2) -> list[dict]:
+    """Find brand/place/product mentions inside one clip spec and time them.
+
+    Returns [{"term", "at", "dur", "span", "image"|None}] - "at" is span-local
+    seconds of the first word of the mention. Zero results is a legit outcome
+    (same philosophy as cutaways: only CONCRETE named entities, never themes).
+    """
+    spans = clip.get("segments") or [{"start": clip.get("start"),
+                                      "words": clip.get("words") or []}]
+    numbered = []
+    for si, sp in enumerate(spans):
+        text = " ".join(w["w"] for w in sp.get("words") or [])
+        numbered.append(f"[span {si}] {text}")
+    system = (
+        "You extract CONCRETE named entities - brands, businesses, places, "
+        "products - that are SAID ALOUD in a Hebrew podcast clip transcript. "
+        "Only names a listener would recognize as a specific entity "
+        "(e.g. וואטסאפ, שימורי איכות, חולון); never themes, people, or vague "
+        "references. Return JSON: {\"mentions\": [{\"span\": int, "
+        "\"term\": str, \"quote\": str}]} where quote is the mention's "
+        "exact first word copied VERBATIM from the transcript. At most "
+        f"{max_pops} mentions; an empty list is a perfectly good answer."
+    )
+
+    def validate(obj):
+        if not isinstance(obj, dict) or not isinstance(obj.get("mentions"), list):
+            raise GenerationError("bad mentions shape")
+        return obj
+
+    obj = call_claude_json(system, "\n".join(numbered), validate, titler=titler)
+    out = []
+    for m in obj["mentions"][:max_pops]:
+        si = int(m.get("span", 0))
+        if si >= len(spans):
+            continue
+        words = spans[si].get("words") or []
+        qnorm = _norm(str(m.get("quote", "")))
+        at = None
+        for w in words:
+            if qnorm and _norm(w["w"]).startswith(qnorm[:4]):
+                at = w["t"]
+                break
+        if at is None:
+            continue
+        out.append({"term": m["term"], "at": round(float(at), 2), "dur": 1.3,
+                    "span": si, "image": find_brand_image(m["term"])})
+    return out

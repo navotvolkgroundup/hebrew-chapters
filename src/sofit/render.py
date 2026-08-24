@@ -842,7 +842,8 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
                           accent: tuple[int, int, int, int] | None = None,
                           cta: str | None = None, clip_dur: float | None = None,
                           cta_dur: float = 2.5,
-                          face_band: tuple | None = None) -> Path:
+                          face_band: tuple | None = None,
+                          brand_pops: list[dict] | None = None) -> Path:
     """Burn word-highlighted Hebrew captions: heavy font, raised into the lower
     third, thick outline, the word being spoken popped in an accent colour.
 
@@ -1048,6 +1049,35 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
         pos = (width - card_w - int(width * 0.045), card_y)
         tag_cards.append((card, pos, at, at + dur))
 
+    # Brand pops: a small white card with a brand/place image that flashes for
+    # ~a second when the brand is SAID (word-timed). Face-aware: sits in the
+    # larger face-free band, same logic as the persistent hook card.
+    pop_cards: list[tuple[Image.Image, tuple[int, int], float, float]] = []
+    for pop in (brand_pops or []):
+        img_path = pop.get("image")
+        if not img_path or not os.path.exists(img_path):
+            continue
+        logo_img = Image.open(img_path).convert("RGBA")
+        box = int(width * 0.24)
+        scale = min(box / logo_img.width, box / logo_img.height)
+        logo_img = logo_img.resize((max(1, int(logo_img.width * scale)),
+                                    max(1, int(logo_img.height * scale))))
+        pad = int(width * 0.035)
+        cw_, ch_ = logo_img.width + 2 * pad, logo_img.height + 2 * pad
+        card = Image.new("RGBA", (cw_, ch_), (0, 0, 0, 0))
+        cd_ = ImageDraw.Draw(card)
+        cd_.rounded_rectangle([0, 0, cw_ - 1, ch_ - 1], radius=int(pad * 0.8),
+                              fill=(255, 255, 255, 244))
+        card.paste(logo_img, (pad, pad), logo_img)
+        # News-insert placement: top-RIGHT corner (the show logo owns the
+        # top-left) - faces in a centered 9:16 crop rarely reach it, unlike
+        # any mid-frame band on multi-speaker cuts.
+        px_ = width - cw_ - int(width * 0.045)
+        py_ = max(top_margin, int(height * 0.09))
+        at = float(pop.get("at", 0.0)) / (speed or 1.0)
+        dur = float(pop.get("dur", 1.2)) / (speed or 1.0)
+        pop_cards.append((card, (px_, py_), at, at + dur))
+
     # Closing CTA line: small, upper zone (empty once the hook card is gone),
     # shown over the final cta_dur seconds while the audio still plays.
     cta_lines: list[list[dict]] = []
@@ -1098,6 +1128,12 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
             d = ImageDraw.Draw(img)
             img.paste(persistent_card, card_pos, persistent_card)
 
+        for pc, pc_pos, pc_from, pc_to in pop_cards:
+            if pc_from <= t < pc_to:
+                if img is None:
+                    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                    d = ImageDraw.Draw(img)
+                img.paste(pc, pc_pos, pc)
         for tc, tc_pos, tc_from, tc_to in tag_cards:
             if tc_from <= t < tc_to:
                 if img is None:
@@ -1704,6 +1740,7 @@ def extract_clip(
     cutaways: list[dict] | None = None,
     speaker_tags: list[dict] | None = None,
     face_band: tuple | None = None,
+    brand_pops: list[dict] | None = None,
 ) -> Path:
     """Extract a clip, crop-to-fill the target aspect, and burn captions.
 
@@ -1860,7 +1897,7 @@ def extract_clip(
                                   hook_style=hook_style, speaker_tags=speaker_tags,
                                   safe_area=safe_area, hook_top_min=hook_top_min,
                                   accent=accent, cta=cta, clip_dur=duration,
-                                  face_band=face_band)
+                                  face_band=face_band, brand_pops=brand_pops)
         finally:
             if temp_clip.exists():
                 temp_clip.unlink()
@@ -2097,6 +2134,10 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
                 # spec; "at" is seconds within its span (like cutaways).
                 speaker_tags=[s for s in (clip.get("speaker_tags") or [])
                               if int(s.get("span", 0)) == ri],
+                # Brand pops: {"term","image","at","dur","span"} - "at" is
+                # span-local seconds, like cutaways and speaker tags.
+                brand_pops=[b for b in (clip.get("brand_pops") or [])
+                            if int(b.get("span", 0)) == ri],
                 face_band=face_band,
             )
             parts.append(part_path)
