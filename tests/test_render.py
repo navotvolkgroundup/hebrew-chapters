@@ -669,6 +669,7 @@ def test_caption_chunking_thresholds_are_configurable(monkeypatch):
 
 def test_caption_style_env_knobs(monkeypatch):
     """SOFIT_CAPTION_* tune caption weight; unset means the social defaults."""
+    pytest.importorskip("PIL")
     from sofit.render import _load_caption_font
 
     # Font weight: the knob reaches the variable-font axis.
