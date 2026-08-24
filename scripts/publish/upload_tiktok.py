@@ -22,17 +22,20 @@ PROFILE = Path.home() / ".ws-scraper" / "profile"
 
 def _publish_cfg() -> dict:
     """Machine-local account config (~/.sofit/publish.json) - the code is
-    public OSS, the account details are not. Required keys documented in
-    the repo README."""
+    public OSS, the account details are not. IMPORT-SAFE by design: a missing
+    file returns {} with a warning (CI collects these modules on machines
+    with no config); each script validates the keys it needs at RUN time."""
     import json as _json
+    import sys as _sys
     from pathlib import Path as _Path
     p = _Path.home() / ".sofit" / "publish.json"
     try:
         return _json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        raise SystemExit(f"error: missing/invalid {p} - create it with "
-                         '{"ig_profile": ..., "ig_collaborators": [...], '
-                         '"clips_dir": "~/Downloads", "plans_dir": "~/.sofit/plans"}')
+        print(f"warn: missing/invalid {p} - running with defaults "
+              '({"ig_profile", "ig_collaborators", "clips_dir", "plans_dir"})',
+              file=_sys.stderr)
+        return {}
 
 _CFG = _publish_cfg()
 CLIPS_DIR = Path(_CFG.get("clips_dir", "~/Downloads")).expanduser()
