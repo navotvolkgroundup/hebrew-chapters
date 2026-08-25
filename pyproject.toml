@@ -27,3 +27,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sofit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
