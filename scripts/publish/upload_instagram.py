@@ -230,12 +230,67 @@ def main() -> int:
                          x.children.length===0 && /, \\d{4}$/.test(x.textContent.trim()));
                          if (e) e.click(); }""")
                 page.wait_for_timeout(1_200)
+                # The picker opens on the CURRENT month. Clicking a bare day
+                # number without advancing schedules the wrong date (or leaves
+                # it untouched, which IG then rejects with "Choose a time at
+                # least 20 minutes from now") - 2026-08-27: the three
+                # September posts of the WS208 batch all failed this way while
+                # the two August ones went through.
+                want_month = target.strftime("%B %Y")
+                for _ in range(4):
+                    shown = page.evaluate(
+                        """() => { const e=[...document.querySelectorAll('*')].find(x =>
+                             x.children.length===0 &&
+                             /^[A-Z][a-z]+ \\d{4}$/.test(x.textContent.trim()));
+                             return e ? e.textContent.trim() : ''; }""")
+                    if shown == want_month or not shown:
+                        break
+                    try:
+                        page.locator(
+                            "div[role=button]:has(svg[aria-label='Next month']), "
+                            "button[aria-label='Next month'], "
+                            "div[role=button]:has(svg[aria-label='Right chevron'])"
+                        ).first.click(timeout=4_000)
+                        page.wait_for_timeout(1_000)
+                    except Exception:  # noqa: BLE001
+                        break
+                # Click the day cell INSIDE the picker. A page-wide search for
+                # the bare day number picks up unrelated "1"/"2" text from the
+                # feed behind the dialog and clicks that instead (2026-08-27).
                 page.evaluate(
-                    """(d) => { const els=[...document.querySelectorAll('*')].filter(x =>
-                         x.children.length===0 && x.textContent.trim()===String(d) &&
-                         x.offsetParent!==null);
-                         if (els.length) els[els.length-1].click(); }""", target.day)
-                page.wait_for_timeout(800)
+                    """(d) => {
+                      const lbl=[...document.querySelectorAll('*')].find(x =>
+                        x.children.length===0 &&
+                        /^[A-Z][a-z]+ \\d{4}$/.test(x.textContent.trim()));
+                      if (!lbl) return;
+                      let root=lbl;
+                      for (let i=0;i<6;i++){
+                        root=root.parentElement;
+                        if (root && /\\bSun\\b/.test(root.textContent) &&
+                            /\\bSat\\b/.test(root.textContent)) break;
+                      }
+                      if (!root) return;
+                      const cell=[...root.querySelectorAll('*')].find(x =>
+                        x.children.length===0 && x.textContent.trim()===String(d) &&
+                        x.offsetParent!==null &&
+                        getComputedStyle(x).cursor !== 'not-allowed');
+                      if (cell) (cell.closest('[role=button]')||cell).click();
+                    }""", target.day)
+                page.wait_for_timeout(1_200)
+                # Hard gate: the field MUST now read the target date. IG greys
+                # out Schedule on a past date and the old code sailed past it.
+                shown_date = page.evaluate(
+                    """() => { const e=[...document.querySelectorAll('*')].find(x =>
+                         x.children.length===0 && /, \\d{4}$/.test(x.textContent.trim()));
+                         return e ? e.textContent.trim() : ''; }""")
+                if target.strftime("%b") not in shown_date or \
+                        str(target.day) not in shown_date:
+                    page.screenshot(path=args.shot.replace(".png", "-datefail.png"))
+                    ctx.close()
+                    print(json.dumps({"status": "date_not_set", "clip": args.clip,
+                                      "wanted": post["date"], "shown": shown_date},
+                                     ensure_ascii=False))
+                    return 5
 
             # Time: three keyboard-operable spinbuttons (Hours/Minutes/AM PM).
             hh24 = int(plan["time_local"].split(":")[0])
@@ -311,12 +366,55 @@ def main() -> int:
         page.screenshot(path=args.shot.replace(".png", "-after.png"))
 
         # Source-of-truth verification: the reel must appear on the calendar.
+        # The calendar shows ONE WEEK at a time and opens on the current one,
+        # so a post scheduled for a later week reads as ZERO tiles unless we
+        # page forward first (2026-08-27: a correctly scheduled post reported
+        # calendar_tiles=0 and would have been re-uploaded as a duplicate).
         page.goto("https://www.instagram.com/scheduled_content/",
                   wait_until="domcontentloaded", timeout=60_000)
         page.wait_for_timeout(7_000)
+        for label in ("Not Now", "Not now"):
+            try:
+                page.get_by_role("button", name=label).first.click(timeout=3_000)
+                page.wait_for_timeout(1_000)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        import datetime as _dt2
+        target = _dt2.date.fromisoformat(post["date"])
+        # Sunday-based week index, matching IG's Sun..Sat columns.
+        def _week(d):
+            return (d - _dt2.timedelta(days=(d.weekday() + 1) % 7))
+        hops = (_week(target) - _week(_dt2.date.today())).days // 7
+        for _ in range(max(0, min(hops, 8))):
+            try:
+                page.locator(
+                    "div[role=button]:has(svg[aria-label='Next week'])"
+                ).first.click(timeout=6_000)
+                page.wait_for_timeout(4_000)
+            except Exception:  # noqa: BLE001
+                break
+        # Verify a tile sits in the TARGET DAY's column, not just that the week
+        # has some tiles: a plain count carries over posts from earlier runs and
+        # reads as success even when this post never scheduled (2026-08-27 -
+        # three posts reported calendar_tiles=2 while scheduling nothing).
         tiles = page.evaluate(
-            """() => [...document.querySelectorAll('main img,[role=main] img,img')]
-                 .filter(i => i.offsetParent !== null && i.width > 40).length""")
+            """(day) => {
+              const hdr=[...document.querySelectorAll('*')].find(x =>
+                x.children.length===0 &&
+                new RegExp('^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) '+day+'$')
+                  .test(x.textContent.trim()));
+              const imgs=[...document.querySelectorAll('img')]
+                .filter(i => i.alt==='Scheduled post thumbnail' &&
+                             i.offsetParent!==null);
+              if (!hdr) return {day_column: null, week_tiles: imgs.length};
+              const hx=hdr.getBoundingClientRect();
+              const inCol=imgs.filter(i => {
+                const r=i.getBoundingClientRect();
+                return Math.abs((r.x+r.width/2)-(hx.x+hx.width/2)) < 70;
+              });
+              return {day_column: inCol.length, week_tiles: imgs.length};
+            }""", target.day)
         page.screenshot(path=args.shot.replace(".png", "-calendar.png"))
         ctx.close()
         print(json.dumps({"status": "submitted", "clip": args.clip,
