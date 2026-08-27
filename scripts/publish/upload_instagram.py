@@ -75,11 +75,33 @@ def main() -> int:
             print(json.dumps({"status": "session_dead"}))
             return 2
 
+        # 2026-08-27: IG greets a fresh session with a "Turn on Notifications"
+        # modal that covers the WHOLE page - every sidebar click then lands on
+        # its backdrop and silently does nothing. Dismiss it first.
+        for label in ("Not Now", "Not now"):
+            try:
+                page.get_by_role("button", name=label).first.click(timeout=4_000)
+                page.wait_for_timeout(1_200)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+
         # Create -> Post -> file
-        try:
-            page.get_by_role("link", name="New post").first.click(timeout=5_000)
-        except Exception:  # noqa: BLE001
-            page.get_by_text("Create", exact=True).first.click(timeout=5_000)
+        # 2026-08-27: IG stopped exposing an accessible name on the composer
+        # link (get_by_role("link", name="New post") now matches NOTHING), and
+        # the bare "Create" text matches a HIDDEN span. The svg aria-label is
+        # the only stable anchor - click its enclosing <a>.
+        for loc in (page.locator("a:has(svg[aria-label='New post'])"),
+                    page.locator("svg[aria-label='New post']"),
+                    page.get_by_role("link", name="New post")):
+            try:
+                loc.first.click(timeout=5_000)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        else:
+            print(json.dumps({"status": "composer_not_found"}))
+            return 4
         page.wait_for_timeout(2_000)
         try:
             page.get_by_text("Post", exact=True).first.click(timeout=3_000)
@@ -165,13 +187,21 @@ def main() -> int:
             box.click(timeout=4_000)
             page.wait_for_timeout(1_200)
             for name in wanted:
-                box.fill(name)
-                page.wait_for_timeout(2_000)
-                try:
-                    page.get_by_text(name, exact=True).first.click(timeout=4_000)
-                    collab_added.append(name)
-                    page.wait_for_timeout(800)
-                except Exception:  # noqa: BLE001
+                # Two attempts: IG's suggestion list sometimes needs a re-type
+                # (the first fill can land before the search field is wired).
+                for attempt in (1, 2):
+                    box.fill("")
+                    page.wait_for_timeout(400)
+                    box.fill(name)
+                    page.wait_for_timeout(2_500 * attempt)
+                    try:
+                        page.get_by_text(name, exact=True).first.click(timeout=5_000)
+                        collab_added.append(name)
+                        page.wait_for_timeout(800)
+                        break
+                    except Exception:  # noqa: BLE001
+                        continue
+                else:
                     print(f"warn: collaborator {name} suggestion not found",
                           file=sys.stderr)
             page.get_by_role("button", name="Done").click(timeout=4_000)
@@ -225,13 +255,31 @@ def main() -> int:
             spin("Minutes", mm)
             spin("AM PM", mer[0].lower())
             page.wait_for_timeout(600)
+            # Readback: the spinbuttons stopped exposing aria-valuetext
+            # (2026-08-27), so scrape the rendered "H:MM AM/PM" text instead -
+            # that is what IG will actually schedule.
             sched_val = page.evaluate(
-                """() => { const g=l=>{const e=document.querySelector(
-                     `[role=spinbutton][aria-label='${l}']`);
-                     return e ? (e.getAttribute('aria-valuetext')||e.innerText.trim()||e.value||'?') : '?';};
-                     const d=[...document.querySelectorAll('*')].find(x =>
-                       x.children.length===0 && /, \\d{4}$/.test(x.textContent.trim()));
-                     return `${d?d.textContent.trim():'?'} ${g('Hours')}:${g('Minutes')} ${g('AM PM')}`; }""")
+                """() => { const leaves=[...document.querySelectorAll('*')]
+                     .filter(x => x.children.length===0);
+                     const d=leaves.find(x => /, \\d{4}$/.test(x.textContent.trim()));
+                     const re=/\\d{1,2}:\\d{2}\\s*(AM|PM)/i;
+                     let t=null;
+                     for (const inp of document.querySelectorAll(
+                            'input,[role=spinbutton],[contenteditable]')) {
+                       const v=(inp.value||inp.getAttribute('aria-valuetext')||
+                                inp.textContent||'').trim();
+                       if (re.test(v)) { t=v.match(re)[0]; break; }
+                     }
+                     // IG splits "01:00" and "PM" into sibling nodes, so match
+                     // on the smallest CONTAINER whose joined text has both.
+                     if (!t) {
+                       const cands=[...document.querySelectorAll('div,span,label')]
+                         .filter(x => re.test(x.textContent.replace(/\\s+/g,' ')))
+                         .sort((a,b)=>a.textContent.length-b.textContent.length);
+                       if (cands.length)
+                         t=cands[0].textContent.replace(/\\s+/g,' ').match(re)[0];
+                     }
+                     return `${d?d.textContent.trim():'?'} ${t||'?:?'}`; }""")
         except Exception as e:  # noqa: BLE001
             print(f"warn: schedule step failed ({e})", file=sys.stderr)
         page.screenshot(path=args.shot, full_page=False)

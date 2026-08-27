@@ -100,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
                    "screen) - lets the log answer 'who should open clips' with "
                    "data instead of memory")
     p.add_argument("--log", help="performance log path (default: sofit's PERF_LOG)")
+    p.add_argument("--time", dest="time_local",
+                   help="local posting time HH:MM (e.g. 13:00) - without it a "
+                        "posting-time A/B is unmeasurable after the fact")
     args = p.parse_args(argv)
 
     from . import generate  # lazy: keeps --help fast
@@ -125,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
         row["hook_style"] = "persistent"
     if args.speaker:
         row["speaker"] = args.speaker
+    if args.time_local:
+        row["time_local"] = args.time_local
     if clip_path.exists():
         dur = _duration(clip_path)
         if dur:

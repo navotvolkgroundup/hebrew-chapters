@@ -1780,6 +1780,8 @@ def extract_clip(
     speaker_tags: list[dict] | None = None,
     face_band: tuple | None = None,
     brand_pops: list[dict] | None = None,
+    zoom: float = 1.0,
+    audio_edge_fade: bool = False,
 ) -> Path:
     """Extract a clip, crop-to-fill the target aspect, and burn captions.
 
@@ -1806,6 +1808,12 @@ def extract_clip(
     tw, th = _target_resolution(aspect_ratio)
     hook_top_min = 0   # raised below when a top-corner logo would collide
     vf = crop_vf if crop_vf else _build_crop_vf(aspect_ratio, crop_position)
+    # Punch-in: a slight zoom on alternating narrative spans makes the cut
+    # read as a deliberate camera change. Footage only — captions/brand
+    # overlays render after this and keep their size.
+    if zoom and zoom != 1.0 and not audiogram:
+        vf += (f",scale=ceil(iw*{zoom}/2)*2:ceil(ih*{zoom}/2)*2,"
+               f"crop={tw}:{th}")
 
     # Word-highlight captions (and/or the opening hook card / closing CTA line)
     # render in a second Pillow pass over the cropped clip.
@@ -1836,6 +1844,10 @@ def extract_clip(
         af = f"atempo={speed},{_AUDIO_LIMITER}"
     else:
         af = _AUDIO_LIMITER
+    if audio_edge_fade:
+        # 30ms fades kill the click at narrative-cut joins; inaudible as a fade.
+        fade_out_at = max(0.0, duration / (speed or 1.0) - 0.035)
+        af += f",afade=t=in:d=0.03,afade=t=out:st={fade_out_at:.3f}:d=0.03"
 
     # Step 1: Extract and scale/crop the clip
     if burn_with_pillow or burn_captions:
@@ -2189,6 +2201,10 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
                 brand_pops=[b for b in (clip.get("brand_pops") or [])
                             if int(b.get("span", 0)) == ri],
                 face_band=face_band,
+                # Smoother narrative cuts: alternating punch-in + 30ms audio
+                # edge fades at the joins (concat stays lossless).
+                zoom=(1.07 if len(ranges) > 1 and ri % 2 else 1.0),
+                audio_edge_fade=len(ranges) > 1,
             )
             parts.append(part_path)
 

@@ -57,10 +57,29 @@ def main() -> int:
                    for c in ctx.cookies("https://www.instagram.com")):
             print(json.dumps({"status": "session_dead"}))
             return 2
-        try:
-            page.get_by_role("link", name="New post").first.click(timeout=5_000)
-        except Exception:  # noqa: BLE001
-            page.get_by_text("Create", exact=True).first.click(timeout=5_000)
+        # "Turn on Notifications" modal covers the whole page on a fresh
+        # session and swallows every sidebar click - dismiss it first.
+        for label in ("Not Now", "Not now"):
+            try:
+                page.get_by_role("button", name=label).first.click(timeout=4_000)
+                page.wait_for_timeout(1_200)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+
+        # See upload_instagram.py: role/text locators broke 2026-08-27; the
+        # svg aria-label is the only stable anchor for the composer link.
+        for loc in (page.locator("a:has(svg[aria-label='New post'])"),
+                    page.locator("svg[aria-label='New post']"),
+                    page.get_by_role("link", name="New post")):
+            try:
+                loc.first.click(timeout=5_000)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        else:
+            print(json.dumps({"status": "composer_not_found"}))
+            return 4
         page.wait_for_timeout(2_000)
         try:
             page.get_by_text("Post", exact=True).first.click(timeout=3_000)
