@@ -273,14 +273,24 @@ def main() -> int:
         page.goto("https://www.tiktok.com/tiktokstudio/content",
                   wait_until="domcontentloaded", timeout=60_000)
         page.wait_for_timeout(6_000)
-        first = page.locator("a[href*='/video/']").first
-        post_url = first.get_attribute("href") or ""
-        row_ok = False
-        try:
-            row_text = page.inner_text("body")[:2500]
-            row_ok = want_head in row_text
-        except Exception:  # noqa: BLE001
-            pass
+        # Find the row whose caption matches THIS clip. The list is sorted by
+        # SCHEDULED date, not creation, so a post scheduled earlier than the
+        # ones already queued is not first - taking .first returned another
+        # clip's URL and logged it against this one (2026-08-27).
+        post_url = page.evaluate(
+            """(head) => {
+              for (const a of document.querySelectorAll("a[href*='/video/']")) {
+                let r=a;
+                for (let i=0;i<6&&r;i++){ r=r.parentElement;
+                  if (r && r.innerText && r.innerText.length>60) break; }
+                if (r && r.innerText.includes(head)) return a.href;
+              }
+              return "";
+            }""", want_head)
+        row_ok = bool(post_url)
+        if not post_url:  # keep the old behaviour as a last resort
+            first = page.locator("a[href*='/video/']").first
+            post_url = first.get_attribute("href") or ""
         page.screenshot(path=args.shot.replace(".png", "-after.png"))
         ctx.close()
         if post_url.startswith("/"):
