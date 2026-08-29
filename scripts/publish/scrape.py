@@ -405,6 +405,13 @@ def main() -> int:
         ctx = pw.chromium.launch_persistent_context(
             str(PROFILE_DIR), headless=not args.headed, channel="chrome",
             args=["--disable-blink-features=AutomationControlled"],
+            # YT Studio serves a stripped page to HeadlessChrome UAs, so every
+            # youtube row came back with no metrics (2026-08-28: 18 failures,
+            # an empty youtube ranking). upload_youtube.py already overrode the
+            # UA; the scraper never did.
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/140.0.0.0 Safari/537.36",
             viewport={"width": 1400, "height": 900})
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
