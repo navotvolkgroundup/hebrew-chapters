@@ -709,3 +709,22 @@ def test_zoom_out_factor_and_crop(monkeypatch):
     # landscape targets never pad
     monkeypatch.setenv("SOFIT_ZOOM_OUT", "1.3")
     assert "gblur" not in render._build_crop_vf("16:9", 0.5)
+
+
+def test_merge_continuations():
+    """Transcriber-split tokens are glued back before captions are laid out."""
+    from sofit.render import _merge_continuations
+
+    def texts(words):
+        return [w["text"] for w in _merge_continuations(
+            [{"text": t, "start": i, "end": i + 1} for i, t in enumerate(words)])]
+
+    assert texts(["ה", "-AI", "והכלי", "-AI"]) == ["ה-AI", "והכלי-AI"]
+    assert texts(["תפקיד", "CTO", "-CPO,"]) == ["תפקיד", "CTO-CPO,"]
+    assert texts(["שרפו", "20", ".9", "מיליארד"]) == ["שרפו", "20.9", "מיליארד"]
+    assert texts(["אס", "-אם", "-אסים"]) == ["אס-אם-אסים"]
+    # a lone hyphen is not a continuation, and timings span the merge
+    assert texts(["-", "מקף"]) == ["-", "מקף"]
+    merged = _merge_continuations([{"text": "ה", "start": 1.0, "end": 1.2},
+                                   {"text": "-AI", "start": 1.2, "end": 1.9}])
+    assert merged[0]["start"] == 1.0 and merged[0]["end"] == 1.9

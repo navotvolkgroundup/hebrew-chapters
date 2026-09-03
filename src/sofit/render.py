@@ -712,6 +712,29 @@ def _load_caption_font(size: int, font: str | None = None):
     return ImageFont.load_default()
 
 
+def _merge_continuations(words: list[dict]) -> list[dict]:
+    """Glue back tokens the transcriber split mid-word.
+
+    faster-whisper emits "ה-AI" as ["ה", "-AI"], "CTO-CPO" as ["CTO", "-CPO"]
+    and "20.9" as ["20", ".9"]. Rendered as separate words each piece is laid
+    out on its own, so the hyphen ends up on the wrong side of a Latin token
+    and a one-letter Hebrew prefix can wrap to the previous line entirely -
+    "ה-AI והכלי-AI" came out as "AI- והכלי AI-" (2026-09-03). A token that
+    starts with a hyphen or a decimal point is a continuation, never a word.
+    """
+    out: list[dict] = []
+    for w in words:
+        txt = w["text"]
+        cont = (len(txt) > 1 and (txt[0] == "-" or (txt[0] == "." and txt[1].isdigit())))
+        # a bare one-letter Hebrew prefix immediately followed by a hyphen token
+        if out and cont:
+            out[-1] = {"text": out[-1]["text"] + txt,
+                       "start": out[-1]["start"], "end": w["end"]}
+        else:
+            out.append(dict(w))
+    return out
+
+
 def _caption_entries(transcript: dict, start_time: float, end_time: float) -> list[dict]:
     """Group the clip's words into short caption chunks, KEEPING per-word timings
     (clip-relative) so the burn-in can highlight the word being spoken.
@@ -734,6 +757,7 @@ def _caption_entries(transcript: dict, start_time: float, end_time: float) -> li
             })
     if not words:
         return []
+    words = _merge_continuations(words)
 
     entries: list[dict] = []
     chunk: list[dict] = []
