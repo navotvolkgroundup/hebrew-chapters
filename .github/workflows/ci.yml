@@ -1,6 +1,7 @@
 name: ci
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -13,3 +14,4 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev,mcp]"
       - run: pytest -q
+
