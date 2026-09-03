@@ -155,15 +155,53 @@ def _target_resolution(aspect_ratio: str) -> tuple[int, int]:
     return (1080, 1080)    # square
 
 
+def _zoom_out_factor() -> float:
+    """How much WIDER than a fill-crop to frame a portrait clip (1.0 = fill).
+
+    A 16:9 source cropped to fill 9:16 shows only ~32% of the frame width, so
+    two people at a desk end up uncomfortably close. Values above 1.0 widen
+    the crop and letterbox the leftover height over a blurred copy of the same
+    shot - the usual podcast-clip look. `SOFIT_ZOOM_OUT=1.35` etc; 1.0 keeps
+    the old behaviour.
+    """
+    raw = os.environ.get("SOFIT_ZOOM_OUT")
+    if raw is None and os.environ.get("SOFIT_BRAND") != "off":
+        try:  # brand-kit default, same place as caption_div
+            cfg = json.loads((Path.home() / ".sofit" / "brand.json").read_text())
+            raw = cfg.get("zoom_out")
+        except (OSError, ValueError):
+            raw = None
+    try:
+        v = float(raw) if raw is not None else 1.0
+    except (TypeError, ValueError):
+        return 1.0
+    return max(1.0, min(2.4, v))
+
+
 def _build_crop_vf(aspect_ratio: str, crop_position: float = 0.5) -> str:
     """Build an ffmpeg -vf string that crops (instead of padding) to fill the frame.
 
     crop_position: 0.0 = left/top edge, 0.5 = center, 1.0 = right/bottom edge.
-    Crop-to-fill for every aspect -- never letterbox.
+    Crop-to-fill for every aspect -- never letterbox, unless SOFIT_ZOOM_OUT
+    asks for a wider frame than a fill-crop can give (see _zoom_out_factor).
     """
     tw, th = _target_resolution(aspect_ratio)
     target_ratio = tw / th
     cp = max(0.0, min(1.0, crop_position))
+
+    z = _zoom_out_factor()
+    if target_ratio < 1 and z > 1.0:
+        # Widen the crop by z, then fit it to the frame width and centre it
+        # over a blurred, frame-filling copy of the same crop.
+        cw = f"min(iw\\,ih*{tw}/{th}*{z})"
+        crop = f"crop={cw}:ih:(iw-{cw})*{cp}:0"
+        return (
+            f"{crop},split=2[zb][zf];"
+            f"[zb]scale={tw}:{th}:force_original_aspect_ratio=increase,"
+            f"crop={tw}:{th},gblur=sigma=28[zbb];"
+            f"[zf]scale={tw}:-2[zff];"
+            f"[zbb][zff]overlay=(W-w)/2:(H-h)/2,scale={tw}:{th}"
+        )
 
     if target_ratio > 1:
         # Target is landscape: crop height, keep full width

@@ -684,3 +684,28 @@ def test_caption_style_env_knobs(monkeypatch):
     assert max(28, 1080 // int(os.environ["SOFIT_CAPTION_DIV"])) == 28
     monkeypatch.delenv("SOFIT_CAPTION_DIV")
     assert max(28, 1080 // int(os.environ.get("SOFIT_CAPTION_DIV", "22"))) == 49
+
+def test_zoom_out_factor_and_crop(monkeypatch):
+    """SOFIT_ZOOM_OUT widens the portrait crop and pads over a blurred copy."""
+    from sofit import render
+
+    monkeypatch.setenv("SOFIT_BRAND", "off")
+    monkeypatch.delenv("SOFIT_ZOOM_OUT", raising=False)
+    assert render._zoom_out_factor() == 1.0
+    assert "gblur" not in render._build_crop_vf("9:16", 0.5)
+
+    monkeypatch.setenv("SOFIT_ZOOM_OUT", "1.3")
+    assert render._zoom_out_factor() == 1.3
+    vf = render._build_crop_vf("9:16", 0.5)
+    assert "gblur" in vf and "overlay=(W-w)/2:(H-h)/2" in vf
+    assert vf.rstrip().endswith("scale=1080:1920")
+
+    # clamped, and garbage falls back to fill-crop
+    monkeypatch.setenv("SOFIT_ZOOM_OUT", "9")
+    assert render._zoom_out_factor() == 2.4
+    monkeypatch.setenv("SOFIT_ZOOM_OUT", "nope")
+    assert render._zoom_out_factor() == 1.0
+
+    # landscape targets never pad
+    monkeypatch.setenv("SOFIT_ZOOM_OUT", "1.3")
+    assert "gblur" not in render._build_crop_vf("16:9", 0.5)
