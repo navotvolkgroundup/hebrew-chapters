@@ -219,6 +219,20 @@ def main() -> int:
             # candidates from the last match backwards and verify the input
             # actually changed the right part.
             for nth_from_end in (1, 2, 3):
+                # The hour column is a SCROLLABLE 00-23 list: "13" sits well
+                # below the fold, and a click on an off-view row is swallowed -
+                # the field then keeps the 00:00 default (2026-09-03: clip-8
+                # shipped scheduled for midnight). Scroll the candidate into
+                # view first, then click it.
+                page.evaluate(
+                    """(a) => { const els=[...document.querySelectorAll('*')]
+                        .filter(e=>e.children.length===0 &&
+                                e.textContent.trim()===a.txt &&
+                                e.offsetParent!==null);
+                        const el=els[els.length-a.n];
+                        if(el) el.scrollIntoView({block:'center'}); }""",
+                    {"txt": txt, "n": nth_from_end})
+                page.wait_for_timeout(350)
                 page.evaluate(
                     """(a) => { const els=[...document.querySelectorAll('*')]
                         .filter(e=>e.children.length===0 &&
@@ -236,6 +250,25 @@ def main() -> int:
             print("warn: hour not set", file=sys.stderr)
         if not set_time_part(mm, 1):
             print("warn: minute not set", file=sys.stderr)
+
+        # Clicking a row in the scrollable hour column is FLAKY - it silently
+        # leaves the 00:00 default (2026-09-03: two posts in one batch, one of
+        # which shipped scheduled for midnight). The field is readonly so it
+        # cannot be typed into; reopening the picker and retrying is what
+        # actually recovers.
+        for attempt in range(2, 5):
+            if time_in.input_value() == plan["time_local"]:
+                break
+            print(f"info: time reads {time_in.input_value()}, reopening the "
+                  f"picker (attempt {attempt})", file=sys.stderr)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)
+            purge_tour()
+            time_in.click(force=True)
+            page.wait_for_timeout(1_400)
+            set_time_part(hh, 0)
+            set_time_part(mm, 1)
+            page.wait_for_timeout(600)
         page.wait_for_timeout(800)
         page.keyboard.press("Escape")  # close pickers so the shot shows values
         page.wait_for_timeout(700)
@@ -243,9 +276,20 @@ def main() -> int:
         # Verify what the fields actually hold before anyone clicks Schedule.
         sched_date = page.locator("input[value*='-']").first.input_value()
         sched_time = page.locator("input[value*=':']").first.input_value()
+        # A readback that disagrees with the plan is a HARD STOP, not a warning.
+        # The time columns collide (picking 13:00 can land on 00:00 when the
+        # click hits the minutes column) and on 2026-09-03 that shipped a post
+        # scheduled for midnight while the run still reported "submitted" -
+        # scheduled TikTok posts cannot be edited, so the only fix is delete +
+        # re-upload. Refuse to post rather than post at the wrong time.
         if sched_date != post["date"] or sched_time != plan["time_local"]:
-            print(f"warn: picker shows {sched_date} {sched_time}, "
-                  f"wanted {post['date']} {plan['time_local']}", file=sys.stderr)
+            page.screenshot(path=args.shot.replace(".png", "-timefail.png"))
+            ctx.close()
+            print(json.dumps({"status": "time_not_set", "clip": args.clip,
+                              "wanted": f"{post['date']} {plan['time_local']}",
+                              "shown": f"{sched_date} {sched_time}"},
+                             ensure_ascii=False))
+            return 4
 
         page.screenshot(path=args.shot, full_page=False)
         if args.dry:
